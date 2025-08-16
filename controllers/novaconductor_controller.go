@@ -470,6 +470,7 @@ func (r *NovaConductorReconciler) generateConfigs(
 		"MemcachedServersWithInet":   memcachedInstance.GetMemcachedServerListWithInetString(),
 		"MemcachedTLS":               memcachedInstance.GetMemcachedTLSSupport(),
 		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
+		"NotificationQuorumQueues":   string(secret.Data[NotificationQuorumQueuesSelector]) == "true",
 	}
 	if len(instance.Spec.APIDatabaseHostname) > 0 {
 		apiDatabaseAccount, apiDbSecret, err := mariadbv1.GetAccountAndSecret(ctx, h, instance.Spec.APIDatabaseAccount, instance.Namespace)

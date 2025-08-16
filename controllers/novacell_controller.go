@@ -782,6 +782,7 @@ func (r *NovaCellReconciler) generateComputeConfigs(
 		"transport_url":              string(secret.Data[TransportURLSelector]),
 		"notification_transport_url": string(secret.Data[NotificationTransportURLSelector]),
 		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
+		"NotificationQuorumQueues":   string(secret.Data[NotificationQuorumQueuesSelector]) == "true",
 	}
 	// vnc is optional so we only need to configure it for the compute
 	// if the proxy service is deployed in the cell

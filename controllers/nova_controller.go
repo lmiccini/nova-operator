@@ -398,12 +398,13 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 	}
 
 	var notificationTransportURL string
+	var notificationQuorumQueues bool
 	var notificationMQStatus nova.MessageBusStatus
 	var notificationMQError error
 
 	notificationTransportURLName := instance.Name + "-notification-transport"
 	if notificationBusName != "" {
-		notificationTransportURL, _, notificationMQStatus, notificationMQError = r.ensureMQ(
+		notificationTransportURL, notificationQuorumQueues, notificationMQStatus, notificationMQError = r.ensureMQ(
 			ctx, h, instance, notificationTransportURLName, notificationBusName)
 
 		switch notificationMQStatus {
@@ -613,6 +614,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		apiTransportURL,
 		apiQuorumQueues,
 		notificationTransportURL,
+		notificationQuorumQueues,
 		secret)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -2057,6 +2059,7 @@ func (r *NovaReconciler) ensureTopLevelSecret(
 	apiTransportURL string,
 	apiQuorumQueues bool,
 	notificationTransportURL string,
+	notificationQuorumQueues bool,
 	externalSecret corev1.Secret,
 ) (string, error) {
 	// NOTE(gibi): We can move other sensitive data to the internal Secret from
@@ -2067,6 +2070,7 @@ func (r *NovaReconciler) ensureTopLevelSecret(
 		TransportURLSelector:             apiTransportURL,
 		NotificationTransportURLSelector: notificationTransportURL,
 		QuorumQueuesSelector:             fmt.Sprintf("%t", apiQuorumQueues),
+		NotificationQuorumQueuesSelector: fmt.Sprintf("%t", notificationQuorumQueues),
 	}
 
 	// NOTE(gibi): When we switch to immutable secrets then we need to include

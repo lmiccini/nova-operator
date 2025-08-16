@@ -483,6 +483,7 @@ func (r *NovaNoVNCProxyReconciler) generateConfigs(
 		"MemcachedServers":         memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet": memcachedInstance.GetMemcachedServerListWithInetString(),
 		"QuorumQueues":             string(secret.Data[QuorumQueuesSelector]) == "true",
+		"NotificationQuorumQueues": string(secret.Data[NotificationQuorumQueuesSelector]) == "true",
 		"MemcachedTLS":             memcachedInstance.GetMemcachedTLSSupport(),
 	}
 	if instance.Spec.TLS.Service.Enabled() {
