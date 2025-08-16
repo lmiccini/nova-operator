@@ -99,6 +99,9 @@ const (
 	// NotificationTransportURLSelector is the name of
 	// top level notification message bus transport URL
 	NotificationTransportURLSelector = "notification_transport_url"
+	// QuorumQueuesSelector is the name of key in the internal cell
+	// Secret for the quorum queues status
+	QuorumQueuesSelector = "quorum_queues"
 
 	// fields to index to reconcile when change
 	passwordSecretField        = ".spec.secret"

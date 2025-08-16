@@ -206,6 +206,7 @@ func (r *NovaAPIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (re
 		ServicePasswordSelector,
 		TransportURLSelector,
 		NotificationTransportURLSelector,
+		QuorumQueuesSelector,
 	}
 
 	secretHash, result, secret, err := ensureSecret(
@@ -487,6 +488,10 @@ func (r *NovaAPIReconciler) generateConfigs(
 		return err
 	}
 
+	// Get QuorumQueues status from the secret
+	quorumQueuesStr := string(secret.Data[QuorumQueuesSelector])
+	quorumQueues := quorumQueuesStr == "true"
+
 	templateParameters := map[string]interface{}{
 		"service_name":          "nova-api",
 		"keystone_internal_url": instance.Spec.KeystoneAuthURL,
@@ -515,6 +520,7 @@ func (r *NovaAPIReconciler) generateConfigs(
 		"MemcachedServers":           memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet":   memcachedInstance.GetMemcachedServerListWithInetString(),
 		"MemcachedTLS":               memcachedInstance.GetMemcachedTLSSupport(),
+		"QuorumQueues":               quorumQueues,
 	}
 	// create httpd  vhost template parameters
 	httpdVhostConfig := map[string]interface{}{}

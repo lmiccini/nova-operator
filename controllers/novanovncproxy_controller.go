@@ -482,6 +482,7 @@ func (r *NovaNoVNCProxyReconciler) generateConfigs(
 		"default_user_domain":      "Default",   // fixme
 		"MemcachedServers":         memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet": memcachedInstance.GetMemcachedServerListWithInetString(),
+		"QuorumQueues":             string(secret.Data[QuorumQueuesSelector]) == "true",
 		"MemcachedTLS":             memcachedInstance.GetMemcachedTLSSupport(),
 	}
 	if instance.Spec.TLS.Service.Enabled() {

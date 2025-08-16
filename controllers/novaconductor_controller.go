@@ -202,6 +202,7 @@ func (r *NovaConductorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		ServicePasswordSelector,
 		TransportURLSelector,
 		NotificationTransportURLSelector,
+		QuorumQueuesSelector,
 	}
 
 	secretHash, result, secret, err := ensureSecret(
@@ -468,6 +469,7 @@ func (r *NovaConductorReconciler) generateConfigs(
 		"MemcachedServers":           memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet":   memcachedInstance.GetMemcachedServerListWithInetString(),
 		"MemcachedTLS":               memcachedInstance.GetMemcachedTLSSupport(),
+		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
 	}
 	if len(instance.Spec.APIDatabaseHostname) > 0 {
 		apiDatabaseAccount, apiDbSecret, err := mariadbv1.GetAccountAndSecret(ctx, h, instance.Spec.APIDatabaseAccount, instance.Namespace)

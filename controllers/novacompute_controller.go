@@ -181,6 +181,7 @@ func (r *NovaComputeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		ServicePasswordSelector,
 		TransportURLSelector,
 		NotificationTransportURLSelector,
+		QuorumQueuesSelector,
 	}
 
 	secretHash, result, secret, err := ensureSecret(
@@ -369,7 +370,8 @@ func (r *NovaComputeReconciler) generateConfigs(
 		"notification_transport_url": string(secret.Data[NotificationTransportURLSelector]),
 		"compute_driver":             instance.Spec.ComputeDriver,
 		// Neither the ironic driver nor the fake driver support VNC
-		"vnc_enabled": false,
+		"vnc_enabled":  false,
+		"QuorumQueues": string(secret.Data[QuorumQueuesSelector]) == "true",
 	}
 
 	extraData := map[string]string{}

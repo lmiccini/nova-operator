@@ -148,6 +148,7 @@ func (r *NovaCellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		ServicePasswordSelector,
 		TransportURLSelector,
 		NotificationTransportURLSelector,
+		QuorumQueuesSelector,
 	}
 
 	// For the compute config generation we need to read the input secrets
@@ -780,6 +781,7 @@ func (r *NovaCellReconciler) generateComputeConfigs(
 		"compute_driver":             "libvirt.LibvirtDriver",
 		"transport_url":              string(secret.Data[TransportURLSelector]),
 		"notification_transport_url": string(secret.Data[NotificationTransportURLSelector]),
+		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
 	}
 	// vnc is optional so we only need to configure it for the compute
 	// if the proxy service is deployed in the cell
