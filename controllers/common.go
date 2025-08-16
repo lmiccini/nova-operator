@@ -102,6 +102,9 @@ const (
 	// QuorumQueuesSelector is the name of key in the internal cell
 	// Secret for the quorum queues status
 	QuorumQueuesSelector = "quorum_queues"
+	// NotificationQuorumQueuesSelector is the name of key in the internal
+	// Secret for the notification quorum queues status
+	NotificationQuorumQueuesSelector = "notification_quorum_queues"
 
 	// fields to index to reconcile when change
 	passwordSecretField        = ".spec.secret"
