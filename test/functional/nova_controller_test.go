@@ -220,6 +220,14 @@ var _ = Describe("Nova controller - quorum queues", func() {
 					HaveKeyWithValue(controllers.QuorumQueuesSelector, []byte("true")))
 			}, timeout, interval).Should(Succeed())
 
+			// Also wait for top-level secret to be updated (NovaAPI reads from this)
+			Eventually(func(g Gomega) {
+				topLevelSecret := th.GetSecret(novaNames.InternalTopLevelSecretName)
+				g.Expect(topLevelSecret.Data).To(HaveKey(controllers.QuorumQueuesSelector))
+				g.Expect(topLevelSecret.Data).To(
+					HaveKeyWithValue(controllers.QuorumQueuesSelector, []byte("true")))
+			}, timeout, interval).Should(Succeed())
+
 			// Check that internal secrets have quorum queues set to true
 			internalSecret := th.GetSecret(cell0.InternalCellSecretName)
 			Expect(internalSecret.Data).To(

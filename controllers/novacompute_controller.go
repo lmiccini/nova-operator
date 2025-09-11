@@ -370,7 +370,7 @@ func (r *NovaComputeReconciler) generateConfigs(
 		"compute_driver":             instance.Spec.ComputeDriver,
 		// Neither the ironic driver nor the fake driver support VNC
 		"vnc_enabled":  false,
-		"QuorumQueues": string(secret.Data[QuorumQueuesSelector]) == "true",
+		"quorumqueues": parseQuorumQueues(secret.Data[QuorumQueuesSelector]),
 	}
 
 	extraData := map[string]string{}

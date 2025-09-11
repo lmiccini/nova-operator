@@ -515,7 +515,7 @@ func (r *NovaAPIReconciler) generateConfigs(
 		"MemcachedServers":           memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet":   memcachedInstance.GetMemcachedServerListWithInetString(),
 		"MemcachedTLS":               memcachedInstance.GetMemcachedTLSSupport(),
-		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
+		"quorumqueues":               parseQuorumQueues(secret.Data[QuorumQueuesSelector]),
 	}
 	// create httpd  vhost template parameters
 	httpdVhostConfig := map[string]interface{}{}

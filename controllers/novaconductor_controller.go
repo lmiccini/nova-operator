@@ -468,7 +468,7 @@ func (r *NovaConductorReconciler) generateConfigs(
 		"MemcachedServers":           memcachedInstance.GetMemcachedServerListString(),
 		"MemcachedServersWithInet":   memcachedInstance.GetMemcachedServerListWithInetString(),
 		"MemcachedTLS":               memcachedInstance.GetMemcachedTLSSupport(),
-		"QuorumQueues":               string(secret.Data[QuorumQueuesSelector]) == "true",
+		"quorumqueues":               parseQuorumQueues(secret.Data[QuorumQueuesSelector]),
 	}
 	if len(instance.Spec.APIDatabaseHostname) > 0 {
 		apiDatabaseAccount, apiDbSecret, err := mariadbv1.GetAccountAndSecret(ctx, h, instance.Spec.APIDatabaseAccount, instance.Namespace)

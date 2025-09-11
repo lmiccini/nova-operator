@@ -751,3 +751,11 @@ func SortNovaCellListByName(cellList *novav1.NovaCellList) {
 		return cellList.Items[i].Name < cellList.Items[j].Name
 	})
 }
+
+// parseQuorumQueues parses the quorum queues value from secret data
+func parseQuorumQueues(data []byte) bool {
+	if data == nil {
+		return false
+	}
+	return string(data) == "true"
+}
