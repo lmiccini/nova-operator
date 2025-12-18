@@ -690,6 +690,8 @@ var _ = Describe("Nova reconfiguration", func() {
 
 				cell1 := nova.Spec.CellTemplates["cell1"]
 				cell1.CellMessageBusInstance = "alternate-mq-for-cell1"
+				// Webhook only defaults empty fields, so we need to explicitly update the cluster
+				cell1.MessagingBus.Cluster = "alternate-mq-for-cell1"
 				nova.Spec.CellTemplates["cell1"] = cell1
 
 				g.Expect(k8sClient.Update(ctx, nova)).To(Succeed())

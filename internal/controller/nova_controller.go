@@ -368,7 +368,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 	// message bus is always the same as the top level API message bus so
 	// we create API MQ separately first
 	apiTransportURL, apiQuorumQueues, apiMQStatus, apiMQError := r.ensureMQ(
-		ctx, h, instance, instance.Name+"-api-transport", instance.Spec.APIMessageBusInstance)
+		ctx, h, instance, instance.Name+"-api-transport", instance.Spec.MessagingBus)
 	switch apiMQStatus {
 	case nova.MQFailed:
 		instance.Status.Conditions.Set(condition.FalseCondition(
@@ -404,8 +404,13 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 
 	notificationTransportURLName := instance.Name + "-notification-transport"
 	if notificationBusName != "" {
+		// Use NotificationsBus if specified, otherwise fall back to main MessagingBus config
+		notificationsRabbitMqConfig := instance.Spec.MessagingBus
+		if instance.Spec.NotificationsBus != nil {
+			notificationsRabbitMqConfig = *instance.Spec.NotificationsBus
+		}
 		notificationTransportURL, _, notificationMQStatus, notificationMQError = r.ensureMQ(
-			ctx, h, instance, notificationTransportURLName, notificationBusName)
+			ctx, h, instance, notificationTransportURLName, notificationsRabbitMqConfig)
 
 		switch notificationMQStatus {
 		case nova.MQFailed:
@@ -470,7 +475,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 			err = apiMQError
 		} else {
 			cellTransportURL, cellQuorumQueues, status, err = r.ensureMQ(
-				ctx, h, instance, instance.Name+"-"+cellName+"-transport", cellTemplate.CellMessageBusInstance)
+				ctx, h, instance, instance.Name+"-"+cellName+"-transport", cellTemplate.MessagingBus)
 		}
 		switch status {
 		case nova.MQFailed:
@@ -1711,7 +1716,7 @@ func (r *NovaReconciler) ensureMQ(
 	h *helper.Helper,
 	instance *novav1.Nova,
 	transportName string,
-	messageBusInstanceName string,
+	rabbitMqConfig rabbitmqv1.RabbitMqConfig,
 ) (string, bool, nova.MessageBusStatus, error) {
 	Log := r.GetLogger(ctx)
 	transportURL := &rabbitmqv1.TransportURL{
@@ -1722,7 +1727,13 @@ func (r *NovaReconciler) ensureMQ(
 	}
 
 	op, err := controllerutil.CreateOrPatch(ctx, r.Client, transportURL, func() error {
-		transportURL.Spec.RabbitmqClusterName = messageBusInstanceName
+		transportURL.Spec.RabbitmqClusterName = rabbitMqConfig.Cluster
+		if rabbitMqConfig.User != "" {
+			transportURL.Spec.Username = rabbitMqConfig.User
+		}
+		if rabbitMqConfig.Vhost != "" {
+			transportURL.Spec.Vhost = rabbitMqConfig.Vhost
+		}
 
 		err := controllerutil.SetControllerReference(instance, transportURL, r.Scheme)
 		return err

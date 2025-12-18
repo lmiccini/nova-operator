@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	"github.com/google/go-cmp/cmp"
+	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	service "github.com/openstack-k8s-operators/lib-common/modules/common/service"
 	"github.com/robfig/cron/v3"
 
@@ -88,6 +89,21 @@ func (spec *NovaSpecCore) Default() {
 		spec.APITimeout = novaDefaults.APITimeout
 	}
 
+	// Default MessagingBus from APIMessageBusInstance
+	rabbitmqv1.DefaultRabbitMqConfig(&spec.MessagingBus, spec.APIMessageBusInstance)
+
+	// Default NotificationsBus if NotificationsBusInstance is specified
+	if spec.NotificationsBusInstance != nil && *spec.NotificationsBusInstance != "" {
+		if spec.NotificationsBus == nil {
+			// Initialize NotificationsBus with MessagingBus values to inherit user/vhost
+			spec.NotificationsBus = &rabbitmqv1.RabbitMqConfig{
+				User:  spec.MessagingBus.User,
+				Vhost: spec.MessagingBus.Vhost,
+			}
+		}
+		rabbitmqv1.DefaultRabbitMqConfig(spec.NotificationsBus, *spec.NotificationsBusInstance)
+	}
+
 	for cellName, cellTemplate := range spec.CellTemplates {
 
 		if cellTemplate.MetadataServiceTemplate.Enabled == nil {
@@ -105,6 +121,9 @@ func (spec *NovaSpecCore) Default() {
 				cellTemplate.NoVNCProxyServiceTemplate.Enabled = ptr.To(true)
 			}
 		}
+
+		// Default MessagingBus from CellMessageBusInstance
+		rabbitmqv1.DefaultRabbitMqConfig(&cellTemplate.MessagingBus, cellTemplate.CellMessageBusInstance)
 
 		// "cellTemplate" is a by-value copy, so we need to re-inject the updated version of it into the map
 		spec.CellTemplates[cellName] = cellTemplate
