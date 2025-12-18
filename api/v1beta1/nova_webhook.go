@@ -89,8 +89,10 @@ func (spec *NovaSpecCore) Default() {
 		spec.APITimeout = novaDefaults.APITimeout
 	}
 
-	// Default MessagingBus from APIMessageBusInstance
-	rabbitmqv1.DefaultRabbitMqConfig(&spec.MessagingBus, spec.APIMessageBusInstance)
+	// Default MessagingBus.Cluster from APIMessageBusInstance if not already set
+	if spec.MessagingBus.Cluster == "" {
+		spec.MessagingBus.Cluster = spec.APIMessageBusInstance
+	}
 
 	// Default NotificationsBus if NotificationsBusInstance is specified
 	if spec.NotificationsBusInstance != nil && *spec.NotificationsBusInstance != "" {
@@ -101,7 +103,10 @@ func (spec *NovaSpecCore) Default() {
 				Vhost: spec.MessagingBus.Vhost,
 			}
 		}
-		rabbitmqv1.DefaultRabbitMqConfig(spec.NotificationsBus, *spec.NotificationsBusInstance)
+		// Default cluster name if not already set
+		if spec.NotificationsBus.Cluster == "" {
+			spec.NotificationsBus.Cluster = *spec.NotificationsBusInstance
+		}
 	}
 
 	for cellName, cellTemplate := range spec.CellTemplates {
@@ -122,8 +127,10 @@ func (spec *NovaSpecCore) Default() {
 			}
 		}
 
-		// Default MessagingBus from CellMessageBusInstance
-		rabbitmqv1.DefaultRabbitMqConfig(&cellTemplate.MessagingBus, cellTemplate.CellMessageBusInstance)
+		// Default MessagingBus.Cluster from CellMessageBusInstance if not already set
+		if cellTemplate.MessagingBus.Cluster == "" {
+			cellTemplate.MessagingBus.Cluster = cellTemplate.CellMessageBusInstance
+		}
 
 		// "cellTemplate" is a by-value copy, so we need to re-inject the updated version of it into the map
 		spec.CellTemplates[cellName] = cellTemplate
@@ -334,7 +341,34 @@ func (spec *NovaSpec) ValidateUpdate(old NovaSpec, basePath *field.Path, namespa
 // expected to be called by the validation webhook in the higher level meta
 // operator
 func (spec *NovaSpecCore) ValidateUpdate(old NovaSpecCore, basePath *field.Path, namespace string) field.ErrorList {
-	errors := spec.ValidateCellTemplates(basePath, namespace)
+	var errors field.ErrorList
+
+	// Reject changes to deprecated messagingBusInstance fields - users should use the new messagingBus fields instead
+	if spec.APIMessageBusInstance != old.APIMessageBusInstance {
+		errors = append(errors, field.Forbidden(
+			basePath.Child("apiMessageBusInstance"),
+			"apiMessageBusInstance is deprecated and cannot be changed. Please use messagingBus.cluster instead"))
+	}
+
+	if spec.NotificationsBusInstance != nil && old.NotificationsBusInstance != nil &&
+		*spec.NotificationsBusInstance != *old.NotificationsBusInstance {
+		errors = append(errors, field.Forbidden(
+			basePath.Child("notificationsBusInstance"),
+			"notificationsBusInstance is deprecated and cannot be changed. Please use notificationsBus.cluster instead"))
+	}
+
+	// Check cell template changes
+	for cellName, cellTemplate := range spec.CellTemplates {
+		if oldCell, exists := old.CellTemplates[cellName]; exists {
+			if cellTemplate.CellMessageBusInstance != oldCell.CellMessageBusInstance {
+				errors = append(errors, field.Forbidden(
+					basePath.Child("cellTemplates").Key(cellName).Child("cellMessageBusInstance"),
+					"cellMessageBusInstance is deprecated and cannot be changed. Please use messagingBus.cluster instead"))
+			}
+		}
+	}
+
+	errors = append(errors, spec.ValidateCellTemplates(basePath, namespace)...)
 	// Validate top-level TopologyRef
 	errors = append(errors, topologyv1.ValidateTopologyRef(
 		spec.TopologyRef, *basePath.Child("topologyRef"), namespace)...)

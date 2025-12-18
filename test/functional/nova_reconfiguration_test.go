@@ -689,8 +689,7 @@ var _ = Describe("Nova reconfiguration", func() {
 				nova := GetNova(novaNames.NovaName)
 
 				cell1 := nova.Spec.CellTemplates["cell1"]
-				cell1.CellMessageBusInstance = "alternate-mq-for-cell1"
-				// Webhook only defaults empty fields, so we need to explicitly update the cluster
+				// Use the new messagingBus.cluster field instead of the deprecated cellMessageBusInstance
 				cell1.MessagingBus.Cluster = "alternate-mq-for-cell1"
 				nova.Spec.CellTemplates["cell1"] = cell1
 
