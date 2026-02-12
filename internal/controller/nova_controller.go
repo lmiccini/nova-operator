@@ -577,6 +577,17 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 				"CellName", cellName)
 			continue
 		}
+		// If notifications are requested, ensure the notification MQ is ready
+		// before creating cells to avoid generating config with empty notification transport
+		if instance.Spec.NotificationsBus != nil && instance.Spec.NotificationsBus.Cluster != "" {
+			if notificationMQStatus != nova.MQCompleted {
+				allCellsReady = false
+				skippedCells = append(skippedCells, cellName)
+				Log.Info("Skipping NovaCell as waiting for the notification MQ to be created",
+					"CellName", cellName)
+				continue
+			}
+		}
 
 		// The cell0 is always handled first in the loop as we iterate on
 		// orderedCellNames. So for any other cells we can assume that if cell0
@@ -654,6 +665,15 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		// we need to stop here until cell0 is ready
 		Log.Info("Waiting for cell0 to become Ready before creating the top level services")
 		return ctrl.Result{}, nil
+	}
+
+	// Don't move forward with the top level service creations if notification
+	// transport is requested but not yet ready
+	if instance.Spec.NotificationsBus != nil && instance.Spec.NotificationsBus.Cluster != "" {
+		if notificationMQStatus != nova.MQCompleted {
+			Log.Info("Waiting for notification MQ to become Ready before creating the top level services")
+			return ctrl.Result{}, nil
+		}
 	}
 
 	topLevelSecretName, err := r.ensureTopLevelSecret(

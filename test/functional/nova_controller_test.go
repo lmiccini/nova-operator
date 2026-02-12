@@ -25,8 +25,10 @@ import (
 	. "github.com/openstack-k8s-operators/lib-common/modules/common/test/helpers"
 
 	corev1 "k8s.io/api/core/v1"
+	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	topologyv1 "github.com/openstack-k8s-operators/infra-operator/apis/topology/v1beta1"
@@ -138,6 +140,70 @@ var _ = Describe("Nova controller - notifications", func() {
 			}, timeout, interval).Should(Succeed())
 
 			infra.AssertTransportURLDoesNotExist(notificationsBus.TransportURLName)
+		})
+
+	})
+
+	When("Nova CR instance is created with NotificationsBus but TransportURL not ready", func() {
+		It("does not create cells or services when notification MQ is not ready", func() {
+			// Setup notification bus but DON'T make the TransportURL ready
+			notificationsBus := GetNotificationsBusNames(novaNames.NovaName)
+			DeferCleanup(k8sClient.Delete, ctx, CreateNotificationTransportURLSecret(notificationsBus))
+
+			// Create Nova with NotificationsBus configured from the start
+			spec := GetDefaultNovaSpec()
+			spec["cellTemplates"] = map[string]any{
+				"cell0": GetDefaultNovaCellTemplate(),
+			}
+			spec["notificationsBus"] = map[string]any{
+				"cluster": notificationsBus.BusName,
+			}
+
+			DeferCleanup(th.DeleteInstance, CreateNova(novaNames.NovaName, spec))
+
+			// Setup required dependencies (everything except notification TransportURL)
+			memcachedSpec := infra.GetDefaultMemcachedSpec()
+			DeferCleanup(infra.DeleteMemcached, infra.CreateMemcached(novaNames.NovaName.Namespace, MemcachedInstance, memcachedSpec))
+			infra.SimulateMemcachedReady(novaNames.MemcachedNamespace)
+			DeferCleanup(k8sClient.Delete, ctx, CreateNovaSecret(novaNames.NovaName.Namespace, SecretName))
+			DeferCleanup(k8sClient.Delete, ctx, CreateNovaMessageBusSecret(cell0))
+			DeferCleanup(keystone.DeleteKeystoneAPI, keystone.CreateKeystoneAPI(novaNames.NovaName.Namespace))
+			keystone.SimulateKeystoneServiceReady(novaNames.KeystoneServiceName)
+			mariadb.SimulateMariaDBAccountCompleted(novaNames.APIMariaDBDatabaseAccount)
+			mariadb.SimulateMariaDBAccountCompleted(cell0.MariaDBAccountName)
+			infra.SimulateTransportURLReady(cell0.TransportURLName)
+
+			// Verify notification MQ condition is not ready (TransportURL not simulated)
+			th.ExpectCondition(
+				novaNames.NovaName,
+				ConditionGetterFunc(NovaConditionGetter),
+				novav1.NovaNotificationMQReadyCondition,
+				corev1.ConditionFalse,
+			)
+
+			// Verify that NovaCell, NovaAPI, NovaScheduler are NOT created because notification MQ is not ready.
+			// Prevents generating config with empty notification transport URL).
+			Consistently(func(g Gomega) {
+				// Cells should not be created when notification MQ is not ready
+				novaCellList := &novav1.NovaCellList{}
+				g.Expect(k8sClient.List(ctx, novaCellList, client.InNamespace(novaNames.NovaName.Namespace))).Should(Succeed())
+				g.Expect(novaCellList.Items).To(BeEmpty(), "NovaCells should not be created when notification MQ is not ready")
+
+				// NovaAPI should not exist when notification MQ is not ready
+				novaAPI := &novav1.NovaAPI{}
+				err := k8sClient.Get(ctx, novaNames.APIName, novaAPI)
+				g.Expect(k8s_errors.IsNotFound(err)).To(BeTrue(), "NovaAPI should not exist when notification MQ is not ready")
+
+				// NovaScheduler should not exist when notification MQ is not ready
+				novaScheduler := &novav1.NovaScheduler{}
+				err = k8sClient.Get(ctx, novaNames.SchedulerName, novaScheduler)
+				g.Expect(k8s_errors.IsNotFound(err)).To(BeTrue(), "NovaScheduler should not exist when notification MQ is not ready")
+
+				// NovaMetadata should not exist when notification MQ is not ready
+				novaMetadata := &novav1.NovaMetadata{}
+				err = k8sClient.Get(ctx, novaNames.MetadataName, novaMetadata)
+				g.Expect(k8s_errors.IsNotFound(err)).To(BeTrue(), "NovaMetadata should not exist when notification MQ is not ready")
+			}, consistencyTimeout, interval).Should(Succeed())
 		})
 	})
 
