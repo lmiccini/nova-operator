@@ -219,6 +219,12 @@ type NovaCellSpec struct {
 	// TopologyRef to apply the Topology defined by the associated CR referenced
 	// by name
 	TopologyRef *topologyv1.TopoRef `json:"topologyRef,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	// TransportURLSecret is the name of the secret containing the RabbitMQ
+	// transport URL. Used to trigger a generation bump during credential
+	// rotation so the parent controller can track rollout progress.
+	TransportURLSecret string `json:"transportURLSecret,omitempty"`
 }
 
 // NovaCellDBPurge defines the parameters for the DB archiving and purging

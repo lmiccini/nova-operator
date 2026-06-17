@@ -129,8 +129,6 @@ func (r *NovaMetadataReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err = r.initStatus(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	instance.Status.ObservedGeneration = instance.Generation
-
 	// Always update the instance status when exiting this function so we can
 	// persist any changes happened during the current reconciliation.
 	defer func() {
@@ -334,6 +332,11 @@ func (r *NovaMetadataReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return result, err
 	}
 
+	if !instance.Status.Conditions.IsTrue(condition.DeploymentReadyCondition) {
+		Log.Info("Waiting for the Deployment to become Ready before exposing the service")
+		return ctrl.Result{}, nil
+	}
+
 	apiEndpoint, result, err := r.ensureServiceExposed(ctx, h, instance)
 	if (err != nil || result != ctrl.Result{}) {
 		// We can ignore RequeueAfter as we are watching the Service resource
@@ -353,6 +356,7 @@ func (r *NovaMetadataReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return result, err
 	}
 
+	instance.Status.ObservedGeneration = instance.Generation
 	Log.Info("Successfully reconciled")
 	return ctrl.Result{}, nil
 }

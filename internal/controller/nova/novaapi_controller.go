@@ -132,8 +132,6 @@ func (r *NovaAPIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (re
 	if err = r.initStatus(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	instance.Status.ObservedGeneration = instance.Generation
-
 	// Always update the instance status when exiting this function so we can
 	// persist any changes happened during the current reconciliation.
 	defer func() {
@@ -360,6 +358,7 @@ func (r *NovaAPIReconciler) Reconcile(ctx context.Context, req ctrl.Request) (re
 		return ctrl.Result{}, err
 	}
 
+	instance.Status.ObservedGeneration = instance.Generation
 	Log.Info("Successfully reconciled")
 	return ctrl.Result{}, nil
 }

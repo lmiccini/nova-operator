@@ -438,6 +438,7 @@ var _ = Describe("NovaMetadata controller", func() {
 				ContainSubstring("password = service-password"))
 			Expect(configData).Should(
 				ContainSubstring("local_metadata_per_cell = true"))
+			th.SimulateStatefulSetReplicaReady(cell1.MetadataStatefulSetName)
 			th.ExpectCondition(
 				cell1.MetadataName,
 				ConditionGetterFunc(NovaMetadataConditionGetter),

@@ -114,8 +114,6 @@ func (r *NovaCellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 	if err = r.initStatus(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	instance.Status.ObservedGeneration = instance.Generation
-
 	// Always update the instance status when exiting this function so we can
 	// persist any changes happened during the current reconciliation.
 	defer func() {
@@ -290,6 +288,7 @@ func (r *NovaCellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (r
 		instance.Status.Conditions.Remove(novav1.NovaComputeServiceConfigReady)
 	}
 
+	instance.Status.ObservedGeneration = instance.Generation
 	Log.Info("Successfully reconciled")
 	return ctrl.Result{}, nil
 }
@@ -401,6 +400,17 @@ func (r *NovaCellReconciler) ensureConductor(
 		if c != nil {
 			instance.Status.Conditions.Set(c)
 		}
+	} else {
+		c := conductor.Status.Conditions.Mirror(novav1.NovaConductorReadyCondition)
+		if c != nil && c.Status != corev1.ConditionTrue {
+			instance.Status.Conditions.Set(c)
+		} else {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				novav1.NovaConductorReadyCondition,
+				condition.RequestedReason,
+				condition.SeverityInfo,
+				novav1.NovaConductorReadyInitMessage))
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -492,6 +502,17 @@ func (r *NovaCellReconciler) ensureNoVNCProxy(
 
 		if c != nil {
 			instance.Status.Conditions.Set(c)
+		}
+	} else {
+		c := novncproxy.Status.Conditions.Mirror(novav1.NovaNoVNCProxyReadyCondition)
+		if c != nil && c.Status != corev1.ConditionTrue {
+			instance.Status.Conditions.Set(c)
+		} else {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				novav1.NovaNoVNCProxyReadyCondition,
+				condition.RequestedReason,
+				condition.SeverityInfo,
+				novav1.NovaNoVNCProxyReadyInitMessage))
 		}
 	}
 
@@ -613,6 +634,17 @@ func (r *NovaCellReconciler) ensureMetadata(
 		// reconciliation is run on it to initialize the ReadyCondition yet.
 		if c != nil {
 			instance.Status.Conditions.Set(c)
+		}
+	} else {
+		c := metadata.Status.Conditions.Mirror(novav1.NovaMetadataReadyCondition)
+		if c != nil && c.Status != corev1.ConditionTrue {
+			instance.Status.Conditions.Set(c)
+		} else {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				novav1.NovaMetadataReadyCondition,
+				condition.RequestedReason,
+				condition.SeverityInfo,
+				novav1.NovaMetadataReadyInitMessage))
 		}
 	}
 

@@ -428,7 +428,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 	// Create TransportURLs to access the message buses of each cell. Cell0
 	// message bus is always the same as the top level API message bus so
 	// we create API MQ separately first
-	apiTransportURL, apiRabbitmqUserName, apiQuorumQueues, apiMQStatus, apiMQError := r.ensureMQ(
+	apiTransportURL, apiRabbitmqUserName, apiQuorumQueues, apiMQStatus, apiMQError, apiTransportURLObj := r.ensureMQ(
 		ctx, h, instance, instance.Name+"-api-transport", instance.Spec.MessagingBus)
 	switch apiMQStatus {
 	case nova.MQFailed:
@@ -459,12 +459,13 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 	var notificationRabbitmqUserName string
 	var notificationMQStatus nova.MessageBusStatus
 	var notificationMQError error
+	var notificationTransportURLObj *rabbitmqv1.TransportURL
 
 	notificationTransportName := instance.Name + "-notification-transport"
 	if instance.Spec.NotificationsBus != nil && instance.Spec.NotificationsBus.Cluster != "" {
 		// Use NotificationsBus config (never fall back to MessagingBus to ensure separation)
 		notificationsRabbitMqConfig := *instance.Spec.NotificationsBus
-		notificationTransportURL, notificationRabbitmqUserName, _, notificationMQStatus, notificationMQError = r.ensureMQ(
+		notificationTransportURL, notificationRabbitmqUserName, _, notificationMQStatus, notificationMQError, notificationTransportURLObj = r.ensureMQ(
 			ctx, h, instance, notificationTransportName, notificationsRabbitMqConfig)
 
 		switch notificationMQStatus {
@@ -520,6 +521,10 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 
 	cellMQs := map[string]*nova.MessageBus{}
 	cellRabbitmqUserNames := map[string]string{}
+	cellTransportURLSecretNames := map[string]string{}
+	// cellTransportURLObjs collects TransportURL objects for end-of-reconcile
+	// deferred finalizer cleanup (AC-pattern).
+	cellTransportURLObjs := map[string]*rabbitmqv1.TransportURL{}
 	var failedMQs []string
 	var creatingMQs []string
 	for _, cellName := range orderedCellNames {
@@ -529,6 +534,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		var err error
 		cellTemplate := instance.Spec.CellTemplates[cellName]
 		var cellQuorumQueues bool
+		var cellTransportURLObj *rabbitmqv1.TransportURL
 		// cell0 does not need its own cell message bus it uses the
 		// API message bus instead
 		if cellName == novav1.Cell0Name {
@@ -537,9 +543,15 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 			cellQuorumQueues = apiQuorumQueues
 			status = apiMQStatus
 			err = apiMQError
+			cellTransportURLObj = apiTransportURLObj
 		} else {
-			cellTransportURL, cellRabbitmqUserName, cellQuorumQueues, status, err = r.ensureMQ(
+			cellTransportURL, cellRabbitmqUserName, cellQuorumQueues, status, err, cellTransportURLObj = r.ensureMQ(
 				ctx, h, instance, instance.Name+"-"+cellName+"-transport", cellTemplate.MessagingBus)
+		}
+		// cell0 reuses the API transport so we skip it here to avoid
+		// duplicating the api-transport entry in the status map.
+		if cellTransportURLObj != nil && cellName != novav1.Cell0Name {
+			cellTransportURLObjs[instance.Name+"-"+cellName+"-transport"] = cellTransportURLObj
 		}
 		switch status {
 		case nova.MQFailed:
@@ -552,6 +564,9 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		}
 		cellMQs[cellName] = &nova.MessageBus{TransportURL: cellTransportURL, QuorumQueues: cellQuorumQueues, Status: status}
 		cellRabbitmqUserNames[cellName] = cellRabbitmqUserName
+		if cellTransportURLObj != nil {
+			cellTransportURLSecretNames[cellName] = cellTransportURLObj.Status.SecretName
+		}
 	}
 	if len(failedMQs) > 0 {
 		instance.Status.Conditions.Set(condition.FalseCondition(
@@ -617,6 +632,7 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 			cellDB.Database, apiDB, cellMQ.TransportURL, cellRabbitmqUserNames[cellName], cellMQ.QuorumQueues,
 			notificationTransportURL, notificationRabbitmqUserName,
 			keystoneInternalAuthURL, region, ospSecret, acData,
+			cellTransportURLSecretNames[cellName],
 		)
 		cells[cellName] = cell
 		switch status {
@@ -689,30 +705,34 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		return ctrl.Result{}, err
 	}
 
-	result, err = r.ensureAPI(
+	var apiOp, schedulerOp, metadataOp controllerutil.OperationResult
+	result, apiOp, err = r.ensureAPI(
 		ctx, instance, cell0Template,
 		cellDBs[novav1.Cell0Name].Database, apiDB,
 		keystoneInternalAuthURL, keystonePublicAuthURL, region,
 		topLevelSecretName,
+		apiTransportURLObj.Status.SecretName,
 	)
 	if err != nil {
 		return result, err
 	}
 
-	result, err = r.ensureScheduler(
+	result, schedulerOp, err = r.ensureScheduler(
 		ctx, instance, cell0Template,
 		cellDBs[novav1.Cell0Name].Database, apiDB, keystoneInternalAuthURL, region,
 		topLevelSecretName,
+		apiTransportURLObj.Status.SecretName,
 	)
 	if err != nil {
 		return result, err
 	}
 
 	if *instance.Spec.MetadataServiceTemplate.Enabled {
-		result, err = r.ensureMetadata(
+		result, metadataOp, err = r.ensureMetadata(
 			ctx, instance, cell0Template,
 			cellDBs[novav1.Cell0Name].Database, apiDB, keystoneInternalAuthURL, region,
 			topLevelSecretName,
+			apiTransportURLObj.Status.SecretName,
 		)
 		if err != nil {
 			return result, err
@@ -790,6 +810,52 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 			novav1.NovaCellsDeletionCondition,
 			novav1.NovaCellsDeletionConditionReadyMessage,
 		)
+	}
+
+	// Late phase of the transport secret split pattern: remove the old
+	// transport secret's finalizer and update status only after all
+	// sub-services are ready with the new secret.
+	// Collect all transport URL objects that need end-of-reconcile processing.
+	allTransportURLs := map[string]*rabbitmqv1.TransportURL{}
+	if apiTransportURLObj != nil {
+		allTransportURLs[instance.Name+"-api-transport"] = apiTransportURLObj
+	}
+	if notificationTransportURLObj != nil {
+		allTransportURLs[notificationTransportName] = notificationTransportURLObj
+	}
+	for k, v := range cellTransportURLObjs {
+		allTransportURLs[k] = v
+	}
+	if instance.Status.TransportURLSecrets == nil {
+		instance.Status.TransportURLSecrets = map[string]string{}
+	}
+	// Transport secret rotation guard: only release the old secret's
+	// consumer finalizer after all services have rolled with the new
+	// credentials. We require all sub-CR specs to be stable (no pending
+	// updates from CreateOrPatch) because the generation bump from
+	// TransportURLSecret is consumed by sub-CR controllers almost
+	// instantly, making allSubConditionIsTrue unreliable on its own.
+	allSubCRsStable := apiOp == controllerutil.OperationResultNone &&
+		schedulerOp == controllerutil.OperationResultNone &&
+		metadataOp == controllerutil.OperationResultNone &&
+		allCellsReady
+	for transportName, transportURLObj := range allTransportURLs {
+		isTransportRotation := instance.Status.TransportURLSecrets[transportName] != "" &&
+			instance.Status.TransportURLSecrets[transportName] != transportURLObj.Status.SecretName
+		if isTransportRotation {
+			if allSubCRsStable && allSubConditionIsTrue(instance.Status) {
+				if err := rabbitmqv1.RemoveTransportSecretConsumerFinalizer(
+					ctx, h, instance.Namespace,
+					instance.Status.TransportURLSecrets[transportName],
+					nova.TransportConsumerFinalizer,
+				); err != nil {
+					return ctrl.Result{}, err
+				}
+				instance.Status.TransportURLSecrets[transportName] = transportURLObj.Status.SecretName
+			}
+		} else {
+			instance.Status.TransportURLSecrets[transportName] = transportURLObj.Status.SecretName
+		}
 	}
 
 	// Manage the old AC secret's finalizer and status tracking.
@@ -1300,6 +1366,7 @@ func (r *NovaReconciler) ensureCell(
 	region string,
 	secret corev1.Secret,
 	acData *keystonev1.ApplicationCredentialData,
+	transportURLSecretName string,
 ) (*novav1.NovaCell, nova.CellDeploymentStatus, error) {
 	Log := r.GetLogger(ctx)
 
@@ -1331,11 +1398,12 @@ func (r *NovaReconciler) ensureCell(
 		APITimeout:      instance.Spec.APITimeout,
 		// The assumption is that the CA bundle for ironic compute in the cell
 		// and the conductor in the cell always the same as the NovaAPI
-		TLS:               instance.Spec.APIServiceTemplate.TLS.Ca,
-		PreserveJobs:      instance.Spec.PreserveJobs,
-		MemcachedInstance: getMemcachedInstance(instance, cellTemplate),
-		DBPurge:           cellTemplate.DBPurge,
-		NovaCellImages:    instance.Spec.NovaCellImages,
+		TLS:                instance.Spec.APIServiceTemplate.TLS.Ca,
+		PreserveJobs:       instance.Spec.PreserveJobs,
+		MemcachedInstance:  getMemcachedInstance(instance, cellTemplate),
+		DBPurge:            cellTemplate.DBPurge,
+		NovaCellImages:     instance.Spec.NovaCellImages,
+		TransportURLSecret: transportURLSecretName,
 	}
 	if cellTemplate.HasAPIAccess {
 		cellSpec.APIDatabaseHostname = apiDB.GetDatabaseHostname()
@@ -1377,7 +1445,7 @@ func (r *NovaReconciler) ensureCell(
 		Log.Info(fmt.Sprintf("NovaCell %s.", string(op)), "NovaCell.Name", cell.Name)
 	}
 
-	if !cell.IsReady() || cell.Generation != cell.Status.ObservedGeneration {
+	if op != controllerutil.OperationResultNone || !cell.IsReady() || cell.Generation != cell.Status.ObservedGeneration {
 		// We wait for the cell to become Ready before we map it in the
 		// nova_api DB.
 		return cell, nova.CellDeploying, err
@@ -1478,7 +1546,8 @@ func (r *NovaReconciler) ensureAPI(
 	keystonePublicAuthURL string,
 	region string,
 	secretName string,
-) (ctrl.Result, error) {
+	transportURLSecretName string,
+) (ctrl.Result, controllerutil.OperationResult, error) {
 	Log := r.GetLogger(ctx)
 
 	// TODO(gibi): Pass down a narrowed secret that only hold
@@ -1509,6 +1578,7 @@ func (r *NovaReconciler) ensureAPI(
 		DefaultConfigOverwrite: instance.Spec.APIServiceTemplate.DefaultConfigOverwrite,
 		MemcachedInstance:      getMemcachedInstance(instance, cell0Template),
 		APITimeout:             instance.Spec.APITimeout,
+		TransportURLSecret:     transportURLSecretName,
 	}
 	api := &novav1.NovaAPI{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1541,14 +1611,15 @@ func (r *NovaReconciler) ensureAPI(
 			condition.SeverityError,
 			novav1.NovaAPIReadyErrorMessage,
 			err.Error()))
-		return ctrl.Result{}, err
+		return ctrl.Result{}, controllerutil.OperationResultNone, err
 	}
 
 	if op != controllerutil.OperationResultNone {
 		Log.Info(fmt.Sprintf("NovaAPI %s , NovaAPI.Name %s.", string(op), api.Name))
 	}
 
-	if api.Generation == api.Status.ObservedGeneration {
+	pending := op != controllerutil.OperationResultNone || api.Generation != api.Status.ObservedGeneration
+	if !pending {
 		c := api.Status.Conditions.Mirror(novav1.NovaAPIReadyCondition)
 		// NOTE(gibi): it can be nil if the NovaAPI CR is created but no
 		// reconciliation is run on it to initialize the ReadyCondition yet.
@@ -1556,9 +1627,15 @@ func (r *NovaReconciler) ensureAPI(
 			instance.Status.Conditions.Set(c)
 		}
 		instance.Status.APIServiceReadyCount = api.Status.ReadyCount
+	} else {
+		instance.Status.Conditions.Set(condition.FalseCondition(
+			novav1.NovaAPIReadyCondition,
+			condition.RequestedReason,
+			condition.SeverityInfo,
+			condition.DeploymentReadyRunningMessage))
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, op, nil
 }
 
 func (r *NovaReconciler) ensureScheduler(
@@ -1570,7 +1647,8 @@ func (r *NovaReconciler) ensureScheduler(
 	keystoneAuthURL string,
 	region string,
 	secretName string,
-) (ctrl.Result, error) {
+	transportURLSecretName string,
+) (ctrl.Result, controllerutil.OperationResult, error) {
 	Log := r.GetLogger(ctx)
 	// TODO(gibi): Pass down a narrowed secret that only hold
 	// specific information but also holds user names
@@ -1599,8 +1677,9 @@ func (r *NovaReconciler) ensureScheduler(
 		ServiceAccount:  instance.RbacResourceName(),
 		RegisteredCells: instance.Status.RegisteredCells,
 		// The assumption is that the CA bundle for the NovaScheduler is the same as the NovaAPI
-		TLS:               instance.Spec.APIServiceTemplate.TLS.Ca,
-		MemcachedInstance: getMemcachedInstance(instance, cell0Template),
+		TLS:                instance.Spec.APIServiceTemplate.TLS.Ca,
+		MemcachedInstance:  getMemcachedInstance(instance, cell0Template),
+		TransportURLSecret: transportURLSecretName,
 	}
 	scheduler := &novav1.NovaScheduler{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1632,7 +1711,7 @@ func (r *NovaReconciler) ensureScheduler(
 			condition.SeverityError,
 			novav1.NovaSchedulerReadyErrorMessage,
 			err.Error()))
-		return ctrl.Result{}, err
+		return ctrl.Result{}, controllerutil.OperationResultNone, err
 	}
 
 	if op != controllerutil.OperationResultNone {
@@ -1640,7 +1719,8 @@ func (r *NovaReconciler) ensureScheduler(
 			scheduler.Name))
 	}
 
-	if scheduler.Generation == scheduler.Status.ObservedGeneration {
+	pending := op != controllerutil.OperationResultNone || scheduler.Generation != scheduler.Status.ObservedGeneration
+	if !pending {
 		c := scheduler.Status.Conditions.Mirror(novav1.NovaSchedulerReadyCondition)
 		// NOTE(gibi): it can be nil if the NovaScheduler CR is created but no
 		// reconciliation is run on it to initialize the ReadyCondition yet.
@@ -1648,9 +1728,15 @@ func (r *NovaReconciler) ensureScheduler(
 			instance.Status.Conditions.Set(c)
 		}
 		instance.Status.SchedulerServiceReadyCount = scheduler.Status.ReadyCount
+	} else {
+		instance.Status.Conditions.Set(condition.FalseCondition(
+			novav1.NovaSchedulerReadyCondition,
+			condition.RequestedReason,
+			condition.SeverityInfo,
+			condition.DeploymentReadyRunningMessage))
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, op, nil
 }
 
 func (r *NovaReconciler) ensureKeystoneServiceUser(
@@ -1807,6 +1893,38 @@ func (r *NovaReconciler) reconcileDelete(
 		return err
 	}
 
+	for _, secretName := range instance.Status.TransportURLSecrets {
+		if err := rabbitmqv1.RemoveTransportSecretConsumerFinalizer(
+			ctx, h, instance.Namespace,
+			secretName, nova.TransportConsumerFinalizer,
+		); err != nil {
+			return err
+		}
+	}
+
+	// Fallback: if TransportURLSecrets is empty (reconcile never completed),
+	// look up live TransportURL CRs to find secret names for finalizer removal.
+	if len(instance.Status.TransportURLSecrets) == 0 {
+		transportURLList := &rabbitmqv1.TransportURLList{}
+		if err := r.Client.List(ctx, transportURLList,
+			client.InNamespace(instance.Namespace),
+		); err == nil {
+			for i := range transportURLList.Items {
+				tu := &transportURLList.Items[i]
+				for _, ref := range tu.GetOwnerReferences() {
+					if ref.UID == instance.UID && tu.Status.SecretName != "" {
+						if err := rabbitmqv1.RemoveTransportSecretConsumerFinalizer(
+							ctx, h, instance.Namespace,
+							tu.Status.SecretName, nova.TransportConsumerFinalizer,
+						); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Remove consumer finalizer from AC secrets nova was consuming.
 	for _, secretName := range []string{
 		instance.Status.ApplicationCredentialSecret,
@@ -1835,7 +1953,7 @@ func (r *NovaReconciler) ensureMQ(
 	instance *novav1.Nova,
 	transportName string,
 	rabbitMqConfig rabbitmqv1.RabbitMqConfig,
-) (string, string, bool, nova.MessageBusStatus, error) {
+) (string, string, bool, nova.MessageBusStatus, error, *rabbitmqv1.TransportURL) {
 	Log := r.GetLogger(ctx)
 	transportURL := &rabbitmqv1.TransportURL{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1862,12 +1980,12 @@ func (r *NovaReconciler) ensureMQ(
 			fmt.Sprintf("Error create or update TransportURL object %s", transportName),
 			transportURL,
 			err,
-		)
+		), nil
 	}
 
 	if op != controllerutil.OperationResultNone {
 		Log.Info(fmt.Sprintf("TransportURL object %s created or patched", transportName))
-		return "", "", false, nova.MQCreating, nil
+		return "", "", false, nova.MQCreating, nil, nil
 	}
 
 	err = r.Client.Get(ctx, types.NamespacedName{Namespace: instance.Namespace, Name: transportName}, transportURL)
@@ -1876,11 +1994,11 @@ func (r *NovaReconciler) ensureMQ(
 			fmt.Sprintf("Error reading TransportURL object %s", transportName),
 			transportURL,
 			err,
-		)
+		), nil
 	}
 
 	if k8s_errors.IsNotFound(err) || !transportURL.IsReady() || transportURL.Status.SecretName == "" {
-		return "", "", false, nova.MQCreating, nil
+		return "", "", false, nova.MQCreating, nil, nil
 	}
 
 	secretName := types.NamespacedName{Namespace: instance.Namespace, Name: transportURL.Status.SecretName}
@@ -1889,15 +2007,15 @@ func (r *NovaReconciler) ensureMQ(
 	err = h.GetClient().Get(ctx, secretName, secret)
 	if err != nil {
 		if k8s_errors.IsNotFound(err) {
-			return "", "", false, nova.MQCreating, nil
+			return "", "", false, nova.MQCreating, nil, nil
 		}
-		return "", "", false, nova.MQFailed, err
+		return "", "", false, nova.MQFailed, err, nil
 	}
 
 	url, ok := secret.Data[TransportURLSelector]
 	if !ok {
 		return "", "", false, nova.MQFailed, fmt.Errorf(
-			"%w: the TransportURL secret %s does not have 'transport_url' field", util.ErrFieldNotFound, transportURL.Status.SecretName)
+			"%w: the TransportURL secret %s does not have 'transport_url' field", util.ErrFieldNotFound, transportURL.Status.SecretName), nil
 	}
 
 	// Check if quorum queues are enabled
@@ -1912,7 +2030,15 @@ func (r *NovaReconciler) ensureMQ(
 	// Empty string means using default RabbitMQ user (no dedicated RabbitMQUser CR)
 	rabbitmqUserName := transportURL.Status.RabbitmqUserRef
 
-	return string(url), rabbitmqUserName, quorumQueues, nova.MQCompleted, nil
+	if err := rabbitmqv1.ManageTransportSecretFinalizer(
+		ctx, h, instance.Namespace,
+		transportURL.Status.SecretName,
+		nova.TransportConsumerFinalizer,
+	); err != nil {
+		return "", "", false, nova.MQFailed, err, nil
+	}
+
+	return string(url), rabbitmqUserName, quorumQueues, nova.MQCompleted, nil, transportURL
 }
 
 func (r *NovaReconciler) ensureMQDeleted(
@@ -1952,7 +2078,8 @@ func (r *NovaReconciler) ensureMetadata(
 	keystoneAuthURL string,
 	region string,
 	secretName string,
-) (ctrl.Result, error) {
+	transportURLSecretName string,
+) (ctrl.Result, controllerutil.OperationResult, error) {
 	Log := r.GetLogger(ctx)
 	// There is a case when the user manually created a NovaMetadata while it
 	// was disabled in the Nova and then tries to enable it in Nova.
@@ -1969,7 +2096,7 @@ func (r *NovaReconciler) ensureMetadata(
 	metadata := &novav1.NovaMetadata{}
 	err := r.Client.Get(ctx, metadataName, metadata)
 	if err != nil && !k8s_errors.IsNotFound(err) {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, controllerutil.OperationResultNone, err
 	}
 
 	// If it is not created by us, we don't touch it
@@ -1988,7 +2115,7 @@ func (r *NovaReconciler) ensureMetadata(
 			novav1.NovaMetadataReadyErrorMessage,
 			err.Error()))
 
-		return ctrl.Result{}, err
+		return ctrl.Result{}, controllerutil.OperationResultNone, err
 	}
 
 	// TODO(gibi): Pass down a narrowed secret that only hold
@@ -2018,6 +2145,7 @@ func (r *NovaReconciler) ensureMetadata(
 		DefaultConfigOverwrite: instance.Spec.MetadataServiceTemplate.DefaultConfigOverwrite,
 		MemcachedInstance:      getMemcachedInstance(instance, cell0Template),
 		APITimeout:             instance.Spec.APITimeout,
+		TransportURLSecret:     transportURLSecretName,
 	}
 	metadata = &novav1.NovaMetadata{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2051,14 +2179,15 @@ func (r *NovaReconciler) ensureMetadata(
 			condition.SeverityError,
 			novav1.NovaMetadataReadyErrorMessage,
 			err.Error()))
-		return ctrl.Result{}, err
+		return ctrl.Result{}, controllerutil.OperationResultNone, err
 	}
 
 	if op != controllerutil.OperationResultNone {
 		Log.Info(fmt.Sprintf("NovaMetadata %s.", string(op)), "NovaMetadata.Name", metadata.Name)
 	}
 
-	if metadata.Generation == metadata.Status.ObservedGeneration {
+	pending := op != controllerutil.OperationResultNone || metadata.Generation != metadata.Status.ObservedGeneration
+	if !pending {
 		c := metadata.Status.Conditions.Mirror(novav1.NovaMetadataReadyCondition)
 		// NOTE(gibi): it can be nil if the NovaMetadata CR is created but no
 		// reconciliation is run on it to initialize the ReadyCondition yet.
@@ -2066,8 +2195,14 @@ func (r *NovaReconciler) ensureMetadata(
 			instance.Status.Conditions.Set(c)
 		}
 		instance.Status.MetadataServiceReadyCount = metadata.Status.ReadyCount
+	} else {
+		instance.Status.Conditions.Set(condition.FalseCondition(
+			novav1.NovaMetadataReadyCondition,
+			condition.RequestedReason,
+			condition.SeverityInfo,
+			condition.DeploymentReadyRunningMessage))
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, op, nil
 }
 
 // ensureCellMapped makes sure that the cell has a row in the

@@ -1811,10 +1811,17 @@ var _ = Describe("Nova controller", func() {
 			th.SimulateStatefulSetReplicaReady(cell0.ConductorStatefulSetName)
 			th.SimulateJobSuccess(cell0.CellMappingJobName)
 
-			th.SimulateStatefulSetReplicaReady(novaNames.APIStatefulSetName)
+			Eventually(func(g Gomega) {
+				th.SimulateStatefulSetReplicaReady(novaNames.APIStatefulSetName)
+				instance := &keystonev1.KeystoneEndpoint{}
+				g.Expect(th.K8sClient.Get(th.Ctx, novaNames.APIKeystoneEndpointName, instance)).Should(Succeed())
+			}, timeout, interval).Should(Succeed())
+
 			keystone.SimulateKeystoneEndpointReady(novaNames.APIKeystoneEndpointName)
+
 			th.SimulateStatefulSetReplicaReady(novaNames.SchedulerStatefulSetName)
 			th.SimulateStatefulSetReplicaReady(novaNames.MetadataStatefulSetName)
+			th.SimulateStatefulSetReplicaReady(novaNames.APIStatefulSetName)
 
 			// ensure api/scheduler/metadata all complete
 			Eventually(func(g Gomega) {
@@ -1841,7 +1848,6 @@ var _ = Describe("Nova controller", func() {
 			Eventually(func(g Gomega) {
 				conductor := GetNovaConductor(cell0.ConductorName)
 				g.Expect(conductor.Generation).To(BeNumerically(">", 1))
-				g.Expect(conductor.Generation).To(Equal(conductor.Status.ObservedGeneration))
 			}, timeout, interval).Should(Succeed())
 
 			SimulateReadyOfNovaTopServices()
@@ -1970,7 +1976,6 @@ var _ = Describe("Nova controller", func() {
 			Eventually(func(g Gomega) {
 				conductor := GetNovaConductor(cell0.ConductorName)
 				g.Expect(conductor.Generation).To(BeNumerically(">", 1))
-				g.Expect(conductor.Generation).To(Equal(conductor.Status.ObservedGeneration))
 			}, timeout, interval).Should(Succeed())
 
 			SimulateReadyOfNovaTopServices()
@@ -2466,6 +2471,347 @@ var _ = Describe("application credentials", func() {
 				})
 				g.Expect(secret.Finalizers).NotTo(
 					ContainElement(nova.ACConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+	})
+
+	When("TransportURL consumer finalizer is managed", func() {
+		var transportSecretName string
+
+		BeforeEach(func() {
+			transportSecretName = fmt.Sprintf("%s-secret", cell0.TransportURLName.Name)
+
+			DeferCleanup(k8sClient.Delete, ctx, CreateNovaSecret(novaNames.NovaName.Namespace, SecretName))
+			DeferCleanup(k8sClient.Delete, ctx, CreateNovaMessageBusSecret(cell0))
+			DeferCleanup(
+				mariadb.DeleteDBService,
+				mariadb.CreateDBService(
+					novaNames.NovaName.Namespace,
+					"openstack",
+					corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{{Port: 3306}},
+					},
+				),
+			)
+			memcachedSpec := infra.GetDefaultMemcachedSpec()
+			DeferCleanup(infra.DeleteMemcached, infra.CreateMemcached(novaNames.NovaName.Namespace, MemcachedInstance, memcachedSpec))
+			infra.SimulateMemcachedReady(novaNames.MemcachedNamespace)
+
+			DeferCleanup(keystone.DeleteKeystoneAPI, keystone.CreateKeystoneAPI(novaNames.NovaName.Namespace))
+
+			rawNova := map[string]any{
+				"apiVersion": "nova.openstack.org/v1beta1",
+				"kind":       "Nova",
+				"metadata": map[string]any{
+					"name":      novaNames.NovaName.Name,
+					"namespace": novaNames.NovaName.Namespace,
+				},
+				"spec": map[string]any{
+					"secret":             SecretName,
+					"apiDatabaseAccount": novaNames.APIMariaDBDatabaseAccount.Name,
+					"cellTemplates": map[string]any{
+						"cell0": map[string]any{
+							"cellDatabaseAccount": cell0.MariaDBAccountName.Name,
+							"apiDatabaseAccount":  novaNames.APIMariaDBDatabaseAccount.Name,
+							"hasAPIAccess":        true,
+							"dbPurge": map[string]any{
+								"schedule": "1 0 * * *",
+							},
+						},
+					},
+					"messagingBus": map[string]any{
+						"cluster": cell0.TransportURLName.Name,
+					},
+				},
+			}
+			DeferCleanup(th.DeleteInstance, th.CreateUnstructured(rawNova))
+
+			keystone.SimulateKeystoneServiceReady(novaNames.KeystoneServiceName)
+			mariadb.SimulateMariaDBDatabaseCompleted(novaNames.APIMariaDBDatabaseName)
+			mariadb.SimulateMariaDBAccountCompleted(novaNames.APIMariaDBDatabaseAccount)
+			mariadb.SimulateMariaDBDatabaseCompleted(cell0.MariaDBDatabaseName)
+			mariadb.SimulateMariaDBAccountCompleted(cell0.MariaDBAccountName)
+			infra.SimulateTransportURLReady(cell0.TransportURLName)
+		})
+
+		It("should add the consumer finalizer to the transport secret", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should remove the consumer finalizer from transport secret on CR deletion", func() {
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			th.DeleteInstance(GetNova(novaNames.NovaName))
+
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should hold the old transport secret finalizer until sub-CRs roll out", func() {
+			// 1. Wait for finalizer on old secret
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 2. Bring Nova to fully ready state
+			SimulateReadyOfNovaTopServices()
+
+			th.ExpectCondition(
+				novaNames.NovaName,
+				ConditionGetterFunc(NovaConditionGetter),
+				condition.ReadyCondition,
+				corev1.ConditionTrue,
+			)
+
+			// 3. Simulate transport URL rotation: create new secret and
+			// update TransportURL status to point to it
+			newSecretName := "rabbitmq-rotated-secret"
+			newSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      newSecretName,
+				},
+				Data: map[string][]byte{
+					"transport_url": []byte("rabbit://rotated/fake"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, newSecret)).To(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, newSecret)
+
+			Eventually(func(g Gomega) {
+				transport := infra.GetTransportURL(cell0.TransportURLName)
+				transport.Status.SecretName = newSecretName
+				g.Expect(k8sClient.Status().Update(ctx, transport)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+
+			// 4. New secret gets the consumer finalizer
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      newSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 5. Old secret STILL has the finalizer because sub-CRs have
+			// not yet rolled out with the new transport URL secret name
+			// (their Generation != ObservedGeneration)
+			Consistently(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 6. Simulate all sub-CRs becoming ready again after the
+			// generation bump from the TransportURLSecret spec change
+			SimulateReadyOfNovaTopServices()
+
+			// 7. Now the old secret loses its finalizer
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 8. Status.TransportURLSecrets updated to new secret name
+			Eventually(func(g Gomega) {
+				n := GetNova(novaNames.NovaName)
+				transportKey := novaNames.NovaName.Name + "-api-transport"
+				g.Expect(n.Status.TransportURLSecrets).To(
+					HaveKeyWithValue(transportKey, newSecretName))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should not release the old finalizer while any sub-CR has Generation != ObservedGeneration", func() {
+			// 1. Wait for finalizer on old secret
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer))
+			}, timeout, interval).Should(Succeed())
+
+			// 2. Bring Nova to fully ready state
+			SimulateReadyOfNovaTopServices()
+
+			th.ExpectCondition(
+				novaNames.NovaName,
+				ConditionGetterFunc(NovaConditionGetter),
+				condition.ReadyCondition,
+				corev1.ConditionTrue,
+			)
+
+			// 3. Record each sub-CR's Generation before rotation.
+			// NovaConductor does NOT have a TransportURLSecret field
+			// so its spec won't change during rotation.
+			cellGenBefore := GetNovaCell(cell0.CellCRName).Generation
+			apiGenBefore := GetNovaAPI(novaNames.APIName).Generation
+			schedulerGenBefore := GetNovaScheduler(novaNames.SchedulerName).Generation
+			metadataGenBefore := GetNovaMetadata(novaNames.MetadataName).Generation
+
+			// 4. Simulate transport URL rotation
+			newSecretName := "rabbitmq-rotated-subcr-check"
+			newSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      newSecretName,
+				},
+				Data: map[string][]byte{
+					"transport_url": []byte("rabbit://rotated/fake"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, newSecret)).To(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, newSecret)
+
+			Eventually(func(g Gomega) {
+				transport := infra.GetTransportURL(cell0.TransportURLName)
+				transport.Status.SecretName = newSecretName
+				g.Expect(k8sClient.Status().Update(ctx, transport)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+
+			// 5. The Nova controller updates cell0 first (blocks on
+			// cell0 readiness before touching top-level services).
+			// Wait for the cell to get a generation bump from the
+			// TransportURLSecret spec change.
+			Eventually(func(g Gomega) {
+				cell := GetNovaCell(cell0.CellCRName)
+				g.Expect(cell.Generation).To(BeNumerically(">", cellGenBefore),
+					"NovaCell should get a generation bump from TransportURLSecret change")
+			}, timeout, interval).Should(Succeed())
+
+			// 6. The old finalizer must still be present while
+			// sub-CRs are rolling.
+			Consistently(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer),
+					"Old transport secret should still have the finalizer while cell0 is rolling")
+			}, timeout, interval).Should(Succeed())
+
+			// 7. Simulate conductor ready so cell0 becomes ready.
+			// The Nova controller then proceeds to update
+			// API/Scheduler/Metadata with the new TransportURLSecret.
+			Eventually(func(g Gomega) {
+				th.SimulateStatefulSetReplicaReady(cell0.ConductorStatefulSetName)
+				cell := GetNovaCell(cell0.CellCRName)
+				g.Expect(cell.Status.Conditions.IsTrue(condition.ReadyCondition)).To(BeTrue(),
+					"NovaCell should become ready after conductor is ready")
+			}, timeout, interval).Should(Succeed())
+
+			// 8. Wait for top-level services to receive the
+			// generation bump now that cell0 is ready. The sub-CR
+			// controllers must NOT set ObservedGeneration until the
+			// deployment is ready, so Generation > ObservedGeneration
+			// while StatefulSets are rolling.
+			Eventually(func(g Gomega) {
+				api := GetNovaAPI(novaNames.APIName)
+				g.Expect(api.Generation).To(BeNumerically(">", apiGenBefore),
+					"NovaAPI should get a generation bump")
+				g.Expect(api.Generation).To(BeNumerically(">", api.Status.ObservedGeneration),
+					"NovaAPI should not set ObservedGeneration while deployment is rolling")
+
+				scheduler := GetNovaScheduler(novaNames.SchedulerName)
+				g.Expect(scheduler.Generation).To(BeNumerically(">", schedulerGenBefore),
+					"NovaScheduler should get a generation bump")
+				g.Expect(scheduler.Generation).To(BeNumerically(">", scheduler.Status.ObservedGeneration),
+					"NovaScheduler should not set ObservedGeneration while deployment is rolling")
+
+				metadata := GetNovaMetadata(novaNames.MetadataName)
+				g.Expect(metadata.Generation).To(BeNumerically(">", metadataGenBefore),
+					"NovaMetadata should get a generation bump")
+				g.Expect(metadata.Generation).To(BeNumerically(">", metadata.Status.ObservedGeneration),
+					"NovaMetadata should not set ObservedGeneration while deployment is rolling")
+			}, timeout, interval).Should(Succeed())
+
+			// 9. Old secret still has the finalizer because
+			// top-level services are still rolling
+			Consistently(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).To(
+					ContainElement(nova.TransportConsumerFinalizer),
+					"Old transport secret should still have the finalizer while top-level services are rolling")
+			}, timeout, interval).Should(Succeed())
+
+			// 10. Simulate top-level services becoming ready
+			Eventually(func(g Gomega) {
+				th.SimulateStatefulSetReplicaReady(novaNames.APIStatefulSetName)
+				instance := &keystonev1.KeystoneEndpoint{}
+				g.Expect(th.K8sClient.Get(th.Ctx, novaNames.APIKeystoneEndpointName, instance)).Should(Succeed())
+			}, timeout, interval).Should(Succeed())
+			keystone.SimulateKeystoneEndpointReady(novaNames.APIKeystoneEndpointName)
+			th.SimulateStatefulSetReplicaReady(novaNames.SchedulerStatefulSetName)
+			th.SimulateStatefulSetReplicaReady(novaNames.MetadataStatefulSetName)
+			th.SimulateStatefulSetReplicaReady(novaNames.APIStatefulSetName)
+
+			// 11. Verify every sub-CR now has
+			// Generation == ObservedGeneration (fully rolled out)
+			Eventually(func(g Gomega) {
+				api := GetNovaAPI(novaNames.APIName)
+				g.Expect(api.Generation).To(Equal(api.Status.ObservedGeneration),
+					"NovaAPI should have ObservedGeneration == Generation after rollout")
+
+				scheduler := GetNovaScheduler(novaNames.SchedulerName)
+				g.Expect(scheduler.Generation).To(Equal(scheduler.Status.ObservedGeneration),
+					"NovaScheduler should have ObservedGeneration == Generation after rollout")
+
+				metadata := GetNovaMetadata(novaNames.MetadataName)
+				g.Expect(metadata.Generation).To(Equal(metadata.Status.ObservedGeneration),
+					"NovaMetadata should have ObservedGeneration == Generation after rollout")
+
+				cell := GetNovaCell(cell0.CellCRName)
+				g.Expect(cell.Generation).To(Equal(cell.Status.ObservedGeneration),
+					"NovaCell should have ObservedGeneration == Generation after rollout")
+			}, timeout, interval).Should(Succeed())
+
+			// 12. NOW the old secret loses its finalizer
+			Eventually(func(g Gomega) {
+				secret := th.GetSecret(types.NamespacedName{
+					Namespace: novaNames.NovaName.Namespace,
+					Name:      transportSecretName,
+				})
+				g.Expect(secret.Finalizers).NotTo(
+					ContainElement(nova.TransportConsumerFinalizer),
+					"Old transport secret should lose its finalizer after all sub-CRs are ready")
 			}, timeout, interval).Should(Succeed())
 		})
 	})

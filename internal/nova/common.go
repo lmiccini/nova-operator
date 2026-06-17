@@ -33,6 +33,10 @@ const (
 const (
 	// ACConsumerFinalizer is added to AC secrets that nova is actively consuming
 	ACConsumerFinalizer = "openstack.org/nova-ac-consumer"
+
+	// TransportConsumerFinalizer is added to transport secrets that nova is
+	// actively consuming, preventing premature deletion during credential rotation
+	TransportConsumerFinalizer = "openstack.org/nova-transport-consumer"
 )
 
 // GetScriptSecretName returns the name of the Secret used for the

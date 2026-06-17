@@ -966,6 +966,7 @@ var _ = Describe("Nova reconfiguration", func() {
 
 		// Assert that the config hash is updated in each stateful set
 		Eventually(func(g Gomega) {
+			th.SimulateStatefulSetReplicaReady(novaNames.MetadataStatefulSetName)
 			newHash := GetEnvVarValue(
 				th.GetStatefulSet(novaNames.MetadataStatefulSetName).Spec.Template.Spec.Containers[0].Env, "CONFIG_HASH", "")
 			g.Expect(newHash).NotTo(BeEmpty())

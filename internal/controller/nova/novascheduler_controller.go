@@ -127,8 +127,6 @@ func (r *NovaSchedulerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err = r.initStatus(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	instance.Status.ObservedGeneration = instance.Generation
-
 	// Always update the instance status when exiting this function so we can
 	// persist any changes happened during the current reconciliation.
 	defer func() {
@@ -329,6 +327,7 @@ func (r *NovaSchedulerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Log.Error(err, "Failed cleaning services from nova db")
 	}
 
+	instance.Status.ObservedGeneration = instance.Generation
 	return ctrl.Result{}, nil
 }
 

@@ -132,6 +132,12 @@ type NovaSchedulerSpec struct {
 	// +kubebuilder:validation:Required
 	// MemcachedInstance is the name of the Memcached CR that all nova service will use.
 	MemcachedInstance string `json:"memcachedInstance"`
+
+	// +kubebuilder:validation:Optional
+	// TransportURLSecret is the name of the secret containing the RabbitMQ
+	// transport URL. Used to trigger a generation bump during credential
+	// rotation so the parent controller can track rollout progress.
+	TransportURLSecret string `json:"transportURLSecret,omitempty"`
 }
 
 // NovaSchedulerStatus defines the observed state of NovaScheduler

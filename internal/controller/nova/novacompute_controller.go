@@ -126,8 +126,6 @@ func (r *NovaComputeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err = r.initStatus(instance); err != nil {
 		return ctrl.Result{}, err
 	}
-	instance.Status.ObservedGeneration = instance.Generation
-
 	// Always update the instance status when exiting this function so we can
 	// persist any changes happened during the current reconciliation.
 	defer func() {
@@ -266,6 +264,12 @@ func (r *NovaComputeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return result, err
 	}
 
+	if !instance.Status.Conditions.IsTrue(condition.DeploymentReadyCondition) {
+		Log.Info("Waiting for the Deployment to become Ready")
+		return ctrl.Result{}, nil
+	}
+
+	instance.Status.ObservedGeneration = instance.Generation
 	Log.Info("Successfully reconciled")
 	return ctrl.Result{}, nil
 }
