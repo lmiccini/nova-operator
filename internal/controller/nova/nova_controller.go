@@ -840,22 +840,17 @@ func (r *NovaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (resul
 		metadataOp == controllerutil.OperationResultNone &&
 		allCellsReady
 	for transportName, transportURLObj := range allTransportURLs {
-		isTransportRotation := instance.Status.TransportURLSecrets[transportName] != "" &&
-			instance.Status.TransportURLSecrets[transportName] != transportURLObj.Status.SecretName
-		if isTransportRotation {
-			if allSubCRsStable && allSubConditionIsTrue(instance.Status) {
-				if err := rabbitmqv1.RemoveTransportSecretConsumerFinalizer(
-					ctx, h, instance.Namespace,
-					instance.Status.TransportURLSecrets[transportName],
-					nova.TransportConsumerFinalizer,
-				); err != nil {
-					return ctrl.Result{}, err
-				}
-				instance.Status.TransportURLSecrets[transportName] = transportURLObj.Status.SecretName
-			}
-		} else {
-			instance.Status.TransportURLSecrets[transportName] = transportURLObj.Status.SecretName
+		secretName, err := rabbitmqv1.FinalizeTransportSecretRotation(
+			ctx, h, instance.Namespace,
+			instance.Status.TransportURLSecrets[transportName],
+			transportURLObj.Status.SecretName,
+			nova.TransportConsumerFinalizer,
+			allSubCRsStable && allSubConditionIsTrue(instance.Status),
+		)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
+		instance.Status.TransportURLSecrets[transportName] = secretName
 	}
 
 	// Manage the old AC secret's finalizer and status tracking.
