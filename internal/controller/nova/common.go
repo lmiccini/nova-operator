@@ -414,6 +414,7 @@ type ReconcilerBase struct {
 	Kclient        kubernetes.Interface
 	Scheme         *runtime.Scheme
 	RequeueTimeout time.Duration
+	APIReader      client.Reader
 }
 
 // Manageable all types that conform to this interface can be setup with a controller-runtime manager.
@@ -436,6 +437,7 @@ func NewReconcilerBase(
 		Scheme:         mgr.GetScheme(),
 		Kclient:        kclient,
 		RequeueTimeout: time.Duration(5) * time.Second,
+		APIReader:      mgr.GetAPIReader(),
 	}
 }
 

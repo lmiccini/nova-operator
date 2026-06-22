@@ -52,6 +52,7 @@ import (
 	job "github.com/openstack-k8s-operators/lib-common/modules/common/job"
 	labels "github.com/openstack-k8s-operators/lib-common/modules/common/labels"
 	nad "github.com/openstack-k8s-operators/lib-common/modules/common/networkattachment"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/object"
 	common_rbac "github.com/openstack-k8s-operators/lib-common/modules/common/rbac"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/service"
@@ -456,9 +457,8 @@ func (r *PlacementAPIReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if instance.Spec.Auth.ApplicationCredentialSecret != "" {
-		if err := keystonev1.ManageACSecretFinalizer(ctx, h, instance.Namespace,
+		if err := object.ManageSecretConsumerFinalizer(ctx, h, instance.Namespace,
 			instance.Spec.Auth.ApplicationCredentialSecret,
-			"",
 			placement.ACConsumerFinalizer); err != nil {
 			instance.Status.Conditions.Set(condition.FalseCondition(
 				condition.ServiceConfigReadyCondition,
@@ -527,7 +527,7 @@ func (r *PlacementAPIReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if isRotation {
 		allServicesReady := instance.Status.Conditions.AllSubConditionIsTrue()
 		if allServicesReady {
-			if err := keystonev1.RemoveACSecretConsumerFinalizer(ctx, h, instance.Namespace,
+			if err := object.RemoveSecretConsumerFinalizer(ctx, h, instance.Namespace,
 				instance.Status.ApplicationCredentialSecret, placement.ACConsumerFinalizer); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -1134,7 +1134,7 @@ func (r *PlacementAPIReconciler) reconcileDelete(ctx context.Context, instance *
 		instance.Status.ApplicationCredentialSecret,
 		instance.Spec.Auth.ApplicationCredentialSecret,
 	} {
-		if err := keystonev1.RemoveACSecretConsumerFinalizer(ctx, helper, instance.Namespace,
+		if err := object.RemoveSecretConsumerFinalizer(ctx, helper, instance.Namespace,
 			secretName, placement.ACConsumerFinalizer); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1387,7 +1387,7 @@ func (r *PlacementAPIReconciler) ensureDeployment(
 	if isRotation {
 		allServicesReady := instance.Status.Conditions.AllSubConditionIsTrue()
 		if allServicesReady {
-			if err := keystonev1.RemoveACSecretConsumerFinalizer(ctx, h, instance.Namespace,
+			if err := object.RemoveSecretConsumerFinalizer(ctx, h, instance.Namespace,
 				instance.Status.ApplicationCredentialSecret, placement.ACConsumerFinalizer); err != nil {
 				return ctrl.Result{}, err
 			}

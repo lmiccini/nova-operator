@@ -191,6 +191,11 @@ type NovaStatus struct {
 	// finalizer. Tracked so the controller can remove its finalizer from the
 	// old secret when the openstack-operator rotates the reference.
 	ApplicationCredentialSecret string `json:"applicationCredentialSecret,omitempty"`
+
+	// TransportURLSecret is the name of the transport URL secret nova is
+	// currently consuming and protecting with a consumer finalizer during
+	// credential rotation.
+	TransportURLSecret string `json:"transportURLSecret,omitempty"`
 }
 
 //+kubebuilder:object:root=true
