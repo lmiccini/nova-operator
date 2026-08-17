@@ -122,6 +122,8 @@ github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
+github.com/lmiccini/lib-common/modules/common v0.0.0-20260819124656-03fdfe41f952 h1:y9o0jNE889zIW4PIVAl+zu/G/cpbal4A0yfPoKPp91w=
+github.com/lmiccini/lib-common/modules/common v0.0.0-20260819124656-03fdfe41f952/go.mod h1:vDcTSyaI7R6tjtZOqonr0hzq8JMOfBhJCWZy0tVjQPw=
 github.com/maruel/natural v1.1.1 h1:Hja7XhhmvEFhcByqDoHz9QZbkWey+COd9xWfCfn1ioo=
 github.com/maruel/natural v1.1.1/go.mod h1:v+Rfd79xlw1AgVBjbO0BEQmptqb5HvL/k9GRHB7ZKEg=
 github.com/mfridman/tparse v0.18.0 h1:wh6dzOKaIwkUGyKgOntDW4liXSo37qg5AXbIhkMV3vE=
@@ -144,8 +146,6 @@ github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260827143655-1
 github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260827143655-1b22d997cce7/go.mod h1:2nZqLpDUKJR2HzPJPuWGGiXS/nH4PPBwwTuNeKY7QT0=
 github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260822072640-7bd662ad0284 h1:ERZkiJP+trC/2tiWZ7cVcQSFc3K16mhdVlV+nVy4Vhk=
 github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260822072640-7bd662ad0284/go.mod h1:UCwCYAGhumXDqnViXuvwd6N+BC4fE5KTpbcJq+PFd40=
-github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260824142420-113dc64ecfd4 h1:zDxe4n0GPQ+U8VFZyyCoQed+9Xauz4G22J/X6B4gq20=
-github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260824142420-113dc64ecfd4/go.mod h1:vDcTSyaI7R6tjtZOqonr0hzq8JMOfBhJCWZy0tVjQPw=
 github.com/openstack-k8s-operators/lib-common/modules/openstack v0.6.1-0.20260824142420-113dc64ecfd4 h1:cYQFMrD6zcVsyCXExm07a6wuVLMJmXSNQNaBK23Lu3M=
 github.com/openstack-k8s-operators/lib-common/modules/openstack v0.6.1-0.20260824142420-113dc64ecfd4/go.mod h1:Q5wcK4PnlDJ55H+M38CFNLzL53OHYiwq81mR/gKtJXs=
 github.com/openstack-k8s-operators/lib-common/modules/storage v0.6.1-0.20260818072803-e18950de3098 h1:1yHjBoRwSKTHVDDhgPdAPpBF9kSzw/ued/X+5KCkHyM=
